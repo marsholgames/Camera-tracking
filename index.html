@@ -47,6 +47,9 @@ input[type=range]{width:100%}
     <button id="json" disabled>تصدير JSON</button>
     <button id="bvh" disabled>تصدير CSV</button>
   </div>
+  <div class="row">
+    <button id="ms" class="p" disabled>تصدير 3ds Max (.ms)</button>
+  </div>
 </div>
 
 <script type="module">
@@ -87,7 +90,7 @@ $('flip').onclick=async()=>{facing=facing==='user'?'environment':'user';await ca
 $('rec').onclick=()=>{
   if(!recording){frames=[];cnt=0;t0=performance.now();recording=true;$('rec').textContent='■ إيقاف';$('rec').classList.add('rec');$('play').disabled=true;}
   else{recording=false;$('rec').textContent='● تسجيل';$('rec').classList.remove('rec');
-    const ok=frames.length>0;['play','json','bvh'].forEach(i=>$(i).disabled=!ok);
+    const ok=frames.length>0;['play','json','bvh','ms'].forEach(i=>$(i).disabled=!ok);
     $('info').textContent=`اتسجل ${frames.length} keyframe — ${(frames.length?frames[frames.length-1].t:0).toFixed(1)} ثانية`;}
 };
 
@@ -140,6 +143,35 @@ $('json').onclick=()=>{
     for(const s in f.hands)f.hands[s].forEach((q,i)=>add('hand_'+s+'.'+i,f.t,q));
   });
   save('mocap.json',JSON.stringify({fps_sampling:+$('kf').value,duration:frames.at(-1).t,tracks},null,1),'application/json');
+};
+$('ms').onclick=()=>{
+  const FPS=30,S=170; // S = حجم الجسم تقريبًا بوحدات Max (سم)
+  const tr={};
+  const add=(k,t,q)=>{(tr[k]??=[]).push([Math.round(t*FPS),(q[0]-0.5)*S,q[2]*S,(0.5-q[1])*S])};
+  frames.forEach(f=>{
+    if(f.pose){f.pose.forEach((q,i)=>add('body_'+POSE[i],f.t,q));
+      const mid=(a,b)=>[0,1,2].map(k=>(f.pose[a][k]+f.pose[b][k])/2);
+      add('mid_hip',f.t,mid(23,24));add('mid_shoulder',f.t,mid(11,12));}
+    for(const s in f.hands)f.hands[s].forEach((q,i)=>add('hand_'+s+'_'+i,f.t,q));
+  });
+  let o=`-- Mocap import for 3ds Max\nframeRate=${FPS}\nanimationRange=interval 0 ${Math.round(frames.at(-1).t*FPS)}\ngrp=#()\n`;
+  for(const k in tr){
+    o+=`p=Point name:"${k}" box:true cross:false size:3\nappend grp p\nanimate on (\n`;
+    tr[k].forEach(a=>{o+=`at time ${a[0]} p.pos=[${a[1].toFixed(2)},${a[2].toFixed(2)},${a[3].toFixed(2)}]\n`});
+    o+=`)\n`;
+  }
+  // ===== ربط العظام العادية (Bones) =====
+  const M=[["mid_hip","mid_shoulder","Spine",1],["mid_shoulder","body_nose","Head",0],
+   ["body_l_shoulder","body_l_elbow","UpperArm_L",0],["body_l_elbow","body_l_wrist","Forearm_L",0],["body_l_wrist","body_l_index","Hand_L",0],
+   ["body_r_shoulder","body_r_elbow","UpperArm_R",0],["body_r_elbow","body_r_wrist","Forearm_R",0],["body_r_wrist","body_r_index","Hand_R",0],
+   ["body_l_hip","body_l_knee","Thigh_L",0],["body_l_knee","body_l_ankle","Calf_L",0],["body_l_ankle","body_l_foot","Foot_L",0],
+   ["body_r_hip","body_r_knee","Thigh_R",0],["body_r_knee","body_r_ankle","Calf_R",0],["body_r_ankle","body_r_foot","Foot_R",0]];
+  o+=`\n-- >>> غيّر الاسم التالت في كل سطر لاسم العظمة عندك. الرابع 1 = العظمة تتبع مكان النقطة (للجذر بس)\nboneMap=#(\n`;
+  o+=M.map(m=>`#("${m[0]}","${m[1]}","${m[2]}",${m[3]})`).join(',\n')+`\n)\n`;
+  o+=`for m in boneMap do (\n b=getNodeByName m[3]; t=getNodeByName m[2]; s=getNodeByName m[1]\n if b!=undefined and s!=undefined and t!=undefined do (\n  if m[4]==1 do (pc=Position_Constraint(); b.pos.controller=pc; pc.constraints.appendTarget (getNodeByName m[1]) 100)\n  lc=LookAt_Constraint(); b.rotation.controller=lc; lc.constraints.appendTarget t 100\n  lc.target_axis=0; lc.upnode_world=true\n )\n)\n`;
+  o=o.replace('grp=#()\n','grp=#()\n');
+  o+=`select grp\nmax tool zoomextents all\nsliderTime=0\n`;
+  save('mocap_import.ms',o,'text/plain');
 };
 $('bvh').onclick=()=>{
   const rows=['time,joint,x,y,z'];
